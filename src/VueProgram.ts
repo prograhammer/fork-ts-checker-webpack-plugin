@@ -3,7 +3,8 @@ import path = require('path');
 import ts = require('typescript');
 import FilesRegister = require('./FilesRegister');
 import FilesWatcher = require('./FilesWatcher');
-import vueParser = require('vue-parser');
+// @ts-ignore: Missing type definitions
+import vueTemplateCompiler = require('vue-template-compiler');
 
 class VueProgram {
   static loadProgramConfig(configFile: string) {
@@ -28,6 +29,23 @@ class VueProgram {
     parsed.options.allowNonTsExtensions = true;
 
     return parsed;
+  }
+
+  /**
+   * As parsing of component pad with new line, we have to add disable tslint on this empty content.
+   */
+  public static fixContentForTsLint(content: string): string {
+      const disableTsLint = '// tslint:disable\n'
+      const enableTsLint = '// tslint:enable\n'
+      content = content.replace(/(\s+?)$(\s*)(\s+?)$(\s*\S+)/m,
+          `${disableTsLint}$2${enableTsLint}$4`)
+
+      const enableTsLintIndex = content.indexOf(enableTsLint)
+      if (enableTsLintIndex === -1) {
+        content = content.replace(/^(\s+)(\S+)/, '$2')
+      }
+
+      return content
   }
 
   /**
@@ -87,8 +105,14 @@ class VueProgram {
 
       // get typescript contents from Vue file
       if (source && filePath.substr(-4) === '.vue') {
-        const parsed = vueParser.parse(source.text, 'script', { lang: ['ts', 'tsx', 'js', 'jsx'] });
-        source = ts.createSourceFile(filePath, parsed, languageVersion, true);
+        const sfcDescriptor = vueTemplateCompiler.parseComponent(source.text, {pad: 'line'});
+        if (sfcDescriptor.script && sfcDescriptor.script.attrs && sfcDescriptor.script.attrs.lang == 'ts') {
+          if (sfcDescriptor.script && sfcDescriptor.script.src) {
+            sfcDescriptor.script.content = fs.readFileSync(path.join(filePath, '..', sfcDescriptor.script.src), 'utf8')
+          }
+          const parsed = this.fixContentForTsLint(sfcDescriptor.script.content)
+          source = ts.createSourceFile(filePath, parsed, languageVersion, true);
+        }
       }
 
       return source;
